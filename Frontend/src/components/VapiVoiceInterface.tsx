@@ -1,15 +1,22 @@
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Phone, PhoneOff, Download, Send, Bot, Sparkles, Loader2, Target, CheckCircle2, Paperclip, Link as LinkIcon, X, Heart, Mic, MicOff, BarChart3, ClipboardList, Zap } from 'lucide-react';
+import { Phone, PhoneOff, Download, Send, Sparkles, Loader2, Target, CheckCircle2, Paperclip, Link as LinkIcon, X, Heart, Mic, MicOff, BarChart3, ClipboardList, Zap } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useVapi } from '@/hooks/useVapi';
 import logoImage from '@/assets/talentspotify-logo.png';
 import { fetchAllEmployees, getFullName, Employee } from '@/services/employeeService';
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
 
 interface Participant {
     name: string;
@@ -43,6 +50,7 @@ export const VapiVoiceInterface = () => {
 
     // Auth / Email State
     const [showEmailDialog, setShowEmailDialog] = useState(false);
+    const [reviewType, setReviewType] = useState('Employee + Manager Review');
     const [emailInput, setEmailInput] = useState('');
     const [isVerifyingEmail, setIsVerifyingEmail] = useState(false);
     const [employeeId, setEmployeeId] = useState('');
@@ -67,11 +75,6 @@ export const VapiVoiceInterface = () => {
         isMuted
     } = useVapi();
 
-    // Names are now manually entered or updated by user
-    useEffect(() => {
-        // We no longer auto-prefill names to ensure the user sees the placeholders 
-        // as per the latest requirement. The logic for fetching is removed.
-    }, []);
 
     const handleStartCall = async () => {
         // Start the flow with Email Validation
@@ -131,6 +134,12 @@ export const VapiVoiceInterface = () => {
             // Let's assume lineManager is still on root or check employmentInfo fallback.
             const managerIdRef = targetEmployee.lineManager || employmentInfo.lineNumberManager || employmentInfo.lineManager;
 
+            console.log("%c[DETECTION] Identity Identified:", "color: white; background: #2196F3; font-weight: bold; padding: 4px; border-radius: 4px;", {
+                employeeName: empName,
+                employeeId: empId,
+                managerId: managerIdRef
+            });
+
             // Search Manager by _id
             let managerNameFound = '';
             let mgrId = '';
@@ -146,10 +155,34 @@ export const VapiVoiceInterface = () => {
                     mgrId = manager._id;
                 } else {
                     console.warn("Manager not found for ID:", managerIdRef);
-                    // Fallback or nullable?
                     managerNameFound = "Manager";
                 }
             }
+
+            // PRE-FETCH OKRS AND REVIEW FORM
+            // This ensures they are ready for the Data Inspector and the Call
+            console.log("%c[IDENTITY] Pre-fetching OKRs and Review Form...", "color: #8da356; font-weight: bold;");
+            const { fetchEmployeeOKRs, getFreshReviewForm } = await import('@/services/okrService');
+            await Promise.all([
+                fetchEmployeeOKRs(empId, mgrId),
+                getFreshReviewForm(true, empId, mgrId)
+            ]);
+
+            // Extract Form ID for logging
+            const freshForm = await getFreshReviewForm(false, empId, mgrId);
+            const reviews = freshForm?.data?.review ? [freshForm.data.review] :
+                (Array.isArray(freshForm?.data) ? freshForm.data :
+                    (Array.isArray(freshForm) ? freshForm : []));
+            const foundFormId = reviews.length > 0 ? (reviews[0]._id || reviews[0].id) : 'Not Found';
+
+            console.log("%c[SESSION READY] Identity Summary:", "color: white; background: #4CAF50; font-weight: bold; padding: 4px; border-radius: 4px;");
+            console.table({
+                "Employee Name": empName,
+                "Employee ID": empId,
+                "Manager Name": managerNameFound,
+                "Manager ID": mgrId,
+                "Review Form ID": foundFormId
+            });
 
             // Update State
             setEmployeeName(empName);
@@ -174,17 +207,21 @@ export const VapiVoiceInterface = () => {
     };
 
     const handleConsentSubmit = async () => {
-        // Check if both consents are given and names are present
-        if (!managerConsent || !employeeConsent) {
+        const needsManagerConsent = reviewType === 'Manager Review' || reviewType === 'Employee + Manager Review';
+        const needsEmployeeConsent = reviewType === 'Employee Review' || reviewType === 'Employee + Manager Review';
+
+        // Check if required consents are given
+        if ((needsManagerConsent && !managerConsent) || (needsEmployeeConsent && !employeeConsent)) {
             toast({
                 title: "Consent Required",
-                description: "Both participants must provide consent to proceed.",
+                description: "Required participants must provide consent to proceed.",
                 variant: "destructive"
             });
             return;
         }
 
-        if (!managerName.trim() || !employeeName.trim()) {
+        // Check for required names
+        if (!employeeName.trim() || !managerName.trim()) {
             toast({
                 title: "Information Missing",
                 description: "Both Employee and Manager names are required.",
@@ -197,8 +234,8 @@ export const VapiVoiceInterface = () => {
         setShowConsentDialog(false);
         setIsConnecting(true);
         try {
-            // Pass the extracted IDs to startCall
-            await startCall(managerName, employeeName, employeeId, managerId);
+            // Pass the extracted IDs and review type to startCall
+            await startCall(managerName, employeeName, employeeId, managerId, reviewType);
             setHasStartedCall(true);
         } catch (error) {
             console.error(error);
@@ -347,7 +384,7 @@ ${'='.repeat(60)}
 
             {/* Email Validation Dialog */}
             <Dialog open={showEmailDialog} onOpenChange={setShowEmailDialog}>
-                <DialogContent className="sm:max-w-[425px]">
+                <DialogContent className="sm:max-w-[550px]">
                     <DialogHeader>
                         <DialogTitle>Enter Your Email</DialogTitle>
                         <DialogDescription>
@@ -355,19 +392,37 @@ ${'='.repeat(60)}
                         </DialogDescription>
                     </DialogHeader>
                     <div className="grid gap-4 py-4">
-                        <Input
-                            id="email"
-                            type="email"
-                            placeholder="name@company.com"
-                            value={emailInput}
-                            onChange={(e) => setEmailInput(e.target.value)}
-                            onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                    e.preventDefault();
-                                    handleEmailSubmit();
-                                }
-                            }}
-                        />
+                        <div className="flex flex-col md:flex-row gap-3">
+                            <div className="flex-1">
+                                <label className="text-xs font-medium text-muted-foreground mb-1 block">Work Email</label>
+                                <Input
+                                    id="email"
+                                    type="email"
+                                    placeholder="name@company.com"
+                                    value={emailInput}
+                                    onChange={(e) => setEmailInput(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                            e.preventDefault();
+                                            handleEmailSubmit();
+                                        }
+                                    }}
+                                />
+                            </div>
+                            <div className="w-full md:w-[220px]">
+                                <label className="text-xs font-medium text-muted-foreground mb-1 block">Review Type</label>
+                                <Select value={reviewType} onValueChange={setReviewType}>
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Select review type" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="Employee Review">Employee Review</SelectItem>
+                                        <SelectItem value="Manager Review">Manager Review</SelectItem>
+                                        <SelectItem value="Employee + Manager Review">Employee + Manager Review</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        </div>
                     </div>
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setShowEmailDialog(false)}>Cancel</Button>
@@ -433,69 +488,117 @@ ${'='.repeat(60)}
 
                         {/* Participant Details */}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                                <label className="text-sm font-medium">Employee Name</label>
-                                <Input
-                                    value={employeeName}
-                                    onChange={(e) => setEmployeeName(e.target.value)}
-                                    className="bg-white"
-                                    placeholder="Enter Employee Name"
-                                // Make it read-only if it was successfully fetched, but allow manual override if empty (rare)
-                                // Actually, let's keep it editable just in case the token name is formal/incorrect
-                                />
-                            </div>
-                            <div className="space-y-2">
-                                <label className="text-sm font-medium">Manager Name</label>
-                                <Input
-                                    value={managerName}
-                                    onChange={(e) => setManagerName(e.target.value)}
-                                    className="bg-white"
-                                    placeholder="Enter Manager Name"
-                                />
-                            </div>
+                            {reviewType === 'Manager Review' ? (
+                                <>
+                                    <div className="space-y-2">
+                                        <label className="text-sm font-medium">Manager Name</label>
+                                        <Input
+                                            value={managerName}
+                                            onChange={(e) => setManagerName(e.target.value)}
+                                            className="bg-white"
+                                            placeholder="Enter Manager Name"
+                                        />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <label className="text-sm font-medium">Employee Name</label>
+                                        <Input
+                                            value={employeeName}
+                                            onChange={(e) => setEmployeeName(e.target.value)}
+                                            className="bg-white"
+                                            placeholder="Enter Employee Name"
+                                        />
+                                    </div>
+                                </>
+                            ) : (
+                                <>
+                                    <div className="space-y-2">
+                                        <label className="text-sm font-medium">Employee Name</label>
+                                        <Input
+                                            value={employeeName}
+                                            onChange={(e) => setEmployeeName(e.target.value)}
+                                            className="bg-white"
+                                            placeholder="Enter Employee Name"
+                                        />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <label className="text-sm font-medium">Manager Name</label>
+                                        <Input
+                                            value={managerName}
+                                            onChange={(e) => setManagerName(e.target.value)}
+                                            className="bg-white"
+                                            placeholder="Enter Manager Name"
+                                        />
+                                    </div>
+                                </>
+                            )}
                         </div>
 
                         {/* Consent Checkboxes */}
                         <div className="space-y-4">
-                            <div className="flex items-start space-x-2 md:space-x-3 p-3 md:p-4 bg-accent/5 rounded-lg border border-accent/20">
-                                <Checkbox
-                                    id="manager-consent"
-                                    checked={managerConsent}
-                                    onCheckedChange={(checked) => setManagerConsent(checked as boolean)}
-                                    className="mt-1"
-                                />
-                                <div className="flex-1">
-                                    <label
-                                        htmlFor="manager-consent"
-                                        className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
-                                    >
-                                        <span className="font-semibold text-primary">Manager Consent</span>
-                                        <p className="text-xs text-muted-foreground mt-1">
-                                            I consent to having this performance review session recorded and transcribed. I understand the recording will be used for documentation and HR purposes.
-                                        </p>
-                                    </label>
+                            {reviewType === 'Manager Review' ? (
+                                <div className="flex items-start space-x-2 md:space-x-3 p-3 md:p-4 bg-accent/5 rounded-lg border border-accent/20">
+                                    <Checkbox
+                                        id="manager-consent"
+                                        checked={managerConsent}
+                                        onCheckedChange={(checked) => setManagerConsent(checked as boolean)}
+                                        className="mt-1"
+                                    />
+                                    <div className="flex-1">
+                                        <label
+                                            htmlFor="manager-consent"
+                                            className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+                                        >
+                                            <span className="font-semibold text-primary">Manager Consent</span>
+                                            <p className="text-xs text-muted-foreground mt-1">
+                                                I consent to having this performance review session recorded and transcribed. I understand the recording will be used for documentation and HR purposes.
+                                            </p>
+                                        </label>
+                                    </div>
                                 </div>
-                            </div>
-
-                            <div className="flex items-start space-x-2 md:space-x-3 p-3 md:p-4 bg-accent/5 rounded-lg border border-accent/20">
-                                <Checkbox
-                                    id="employee-consent"
-                                    checked={employeeConsent}
-                                    onCheckedChange={(checked) => setEmployeeConsent(checked as boolean)}
-                                    className="mt-1"
-                                />
-                                <div className="flex-1">
-                                    <label
-                                        htmlFor="employee-consent"
-                                        className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
-                                    >
-                                        <span className="font-semibold text-accent">Employee Consent</span>
-                                        <p className="text-xs text-muted-foreground mt-1">
-                                            I consent to having this performance review session recorded and transcribed. I understand the recording will be used for documentation and HR purposes.
-                                        </p>
-                                    </label>
-                                </div>
-                            </div>
+                            ) : (
+                                <>
+                                    <div className="flex items-start space-x-2 md:space-x-3 p-3 md:p-4 bg-accent/5 rounded-lg border border-accent/20">
+                                        <Checkbox
+                                            id="employee-consent"
+                                            checked={employeeConsent}
+                                            onCheckedChange={(checked) => setEmployeeConsent(checked as boolean)}
+                                            className="mt-1"
+                                        />
+                                        <div className="flex-1">
+                                            <label
+                                                htmlFor="employee-consent"
+                                                className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+                                            >
+                                                <span className="font-semibold text-accent">Employee Consent</span>
+                                                <p className="text-xs text-muted-foreground mt-1">
+                                                    I consent to having this performance review session recorded and transcribed. I understand the recording will be used for documentation and HR purposes.
+                                                </p>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    {reviewType === 'Employee + Manager Review' && (
+                                        <div className="flex items-start space-x-2 md:space-x-3 p-3 md:p-4 bg-accent/5 rounded-lg border border-accent/20">
+                                            <Checkbox
+                                                id="manager-consent"
+                                                checked={managerConsent}
+                                                onCheckedChange={(checked) => setManagerConsent(checked as boolean)}
+                                                className="mt-1"
+                                            />
+                                            <div className="flex-1">
+                                                <label
+                                                    htmlFor="manager-consent"
+                                                    className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+                                                >
+                                                    <span className="font-semibold text-primary">Manager Consent</span>
+                                                    <p className="text-xs text-muted-foreground mt-1">
+                                                        I consent to having this performance review session recorded and transcribed. I understand the recording will be used for documentation and HR purposes.
+                                                    </p>
+                                                </label>
+                                            </div>
+                                        </div>
+                                    )}
+                                </>
+                            )}
                         </div>
                     </div>
 
@@ -512,10 +615,16 @@ ${'='.repeat(60)}
                         </Button>
                         <Button
                             onClick={handleConsentSubmit}
-                            disabled={!managerConsent || !employeeConsent}
+                            disabled={
+                                (reviewType === 'Employee Review' && !employeeConsent) ||
+                                (reviewType === 'Manager Review' && !managerConsent) ||
+                                (reviewType === 'Employee + Manager Review' && (!managerConsent || !employeeConsent))
+                            }
                             className="bg-[#8da356] hover:bg-[#7a8f4b]"
                         >
-                            {managerConsent && employeeConsent ? (
+                            {(reviewType === 'Employee Review' && employeeConsent) ||
+                                (reviewType === 'Manager Review' && managerConsent) ||
+                                (reviewType === 'Employee + Manager Review' && managerConsent && employeeConsent) ? (
                                 <>
                                     <CheckCircle2 className="h-4 w-4 mr-2" />
                                     Start Session

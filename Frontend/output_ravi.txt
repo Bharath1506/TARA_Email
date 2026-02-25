@@ -1,0 +1,165 @@
+﻿Fetching reviews for Ravi from: https://ai.talentspotifyapp.com/api/reviewForm/getAllReviewsForm/6396f7d703546500086f0200/68e240b0d9876d59139672d6/Employee?companyId=6396f7d703546500086f0200
+Reviews found: 1
+LATEST_REVIEW_ID=69808b70ef666770d4f3cf86
+Review JSON: {
+  "overalComments": {
+    "cm1": "I have able to create all class team And I also brought 2 extra clients into the business",
+    "cm2": "I'm planning to improve my competencies And, uh, regarding objective also, I'm trying to get the targets",
+    "cm3": "and I'm expecting you this quarter."
+  },
+  "overallRating": 3.33,
+  "goals": [
+    {
+      "_id": "69589a14dceb09a5159fcb11",
+      "objective": "Increase Revenue",
+      "weight": 50,
+      "progressStatus": 50,
+      "employeeRating": 3,
+      "managerRating": 2,
+      "children": [
+        {
+          "_id": "69589a40dceb09a5159fcb24",
+          "keyResultName": "Increase Sales by 30% compare to last year",
+          "target": "30",
+          "actual": 15,
+          "employeeRating": 4,
+          "managerRating": 2,
+          "employeeFeedback": "Market is a bit difficult this time. Couldn't get get the the target",
+          "managerFeedback": "And she did not reach her, uh, target. As expected"
+        }
+      ],
+      "employeeFeedback": "Because I could not achieve it fully",
+      "managerFeedback": ""
+    },
+    {
+      "_id": "694e73bbafb51c2ffcdf4085",
+      "objective": "Build a world-class customer success team",
+      "weight": 40,
+      "progressStatus": 80,
+      "employeeRating": 2,
+      "managerRating": 4,
+      "children": [
+        {
+          "_id": "694e73e6afb51c2ffcdf4098",
+          "keyResultName": "Hire 10 employees by the end of the month",
+          "target": "10",
+          "actual": 8,
+          "employeeRating": 4,
+          "managerRating": 5,
+          "employeeFeedback": "I have already achieved most of my target",
+          "managerFeedback": ""
+        }
+      ],
+      "employeeFeedback": "",
+      "managerFeedback": ""
+    }
+  ],
+  "competencies": [
+    {
+      "competencyName": "Ownership & Accountability",
+      "title": "Ownership & Accountability",
+      "type": "employee",
+      "Feedback": 4,
+      "Comments": "I have already shown my ownership in many tasks that I have taken up this year",
+      "comments": "I have already shown my ownership in many tasks that I have taken up this year"
+    },
+    {
+      "competencyName": "Ownership & Accountability",
+      "title": "Ownership & Accountability",
+      "type": "manager",
+      "Feedback": 4,
+      "Comments": "Yeah. I can see here there is a ownership from her in many tasks that she has taken. This this year",
+      "comments": "Yeah. I can see here there is a ownership from her in many tasks that she has taken. This this year"
+    },
+    {
+      "competencyName": "Professionalism",
+      "title": "Professionalism",
+      "type": "employee",
+      "Feedback": 4,
+      "Comments": "Because I'm showing lot more professionalism in every task I'm taking up this year",
+      "comments": "Because I'm showing lot more professionalism in every task I'm taking up this year"
+    },
+    {
+      "competencyName": "Professionalism",
+      "title": "Professionalism",
+      "type": "manager",
+      "Feedback": 3,
+      "Comments": "I would like to her improvement in improve professionalism. This year",
+      "comments": "I would like to her improvement in improve professionalism. This year"
+    },
+    {
+      "competencyName": "Customer Focus",
+      "title": "Customer Focus",
+      "type": "employee",
+      "Feedback": 4,
+      "Comments": "I'm trying my best to achieve the target in getting the customer's satisfaction",
+      "comments": "I'm trying my best to achieve the target in getting the customer's satisfaction"
+    },
+    {
+      "competencyName": "Customer Focus",
+      "title": "Customer Focus",
+      "type": "manager",
+      "Feedback": 3,
+      "Comments": "Because I said why.",
+      "comments": "Because I said why."
+    },
+    {
+      "competencyName": "Leadership",
+      "title": "Leadership",
+      "type": "employee",
+      "Feedback": 5,
+      "Comments": "Because I am a great leader.",
+      "comments": "Because I am a great leader."
+    },
+    {
+      "competencyName": "Leadership",
+      "title": "Leadership",
+      "type": "manager",
+      "Feedback": 3,
+      "Comments": "Because I have seen him lead a team effectively.",
+      "comments": "Because I have seen him lead a team effectively."
+    },
+    {
+      "competencyName": "Collaboration",
+      "title": "Collaboration",
+      "type": "employee",
+      "Feedback": 1,
+      "Comments": ""
+    },
+    {
+      "competencyName": "Collaboration",
+      "title": "Collaboration",
+      "type": "manager",
+      "Feedback": 4,
+      "Comments": "Because I have seen him collaborate effectively with cross functional teams.",
+      "comments": "Because I have seen him collaborate effectively with cross functional teams."
+    }
+  ],
+  "status": "Submit",
+  "managerSubmissionDate": "2026-01-29T17:36:22.974Z",
+  "employeeSubmissionDate": "2026-01-29T17:36:22.974Z",
+  "managersRating": 3.33,
+  "_id": "69808b70ef666770d4f3cf86",
+  "employeeName": "68e240b0d9876d59139672d6",
+  "employeeId": "68e240b0d9876d59139672d6",
+  "employeeFullName": "Ravi K",
+  "employeeRole": "Employee",
+  "reviewPeriod": "2026-02-01",
+  "totalAchievement": "57",
+  "startDate": "2026-02-01",
+  "endDate": "2026-02-28",
+  "managerId": "68e49939df33a7c9177aaf03",
+  "managerName": "",
+  "attachment": "",
+  "templateName": "Demo Template",
+  "templateId": "68e3a755247aa2bffbd13c81",
+  "companyId": "6396f7d703546500086f0200",
+  "formId": "REVIEW_FORM_8550813",
+  "__v": 0,
+  "createdAt": "2026-02-02T11:33:04.511Z",
+  "updatedAt": "2026-02-11T05:29:49.748Z",
+  "employeesRating": "2.30",
+  "averageRating": "2.92",
+  "reviewPeriodStartDate": "2026-02-01",
+  "reviewPeriodEndDate": "2026-02-28"
+}

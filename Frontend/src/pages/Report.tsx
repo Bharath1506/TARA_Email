@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -27,7 +27,7 @@ import {
 } from "@/components/ui/tooltip"
 import { OKRTable } from '@/components/OKRTable';
 import { CompetencyTable } from '@/components/CompetencyTable';
-import { fetchReviewForm, fetchEmployeeOKRs } from '@/services/okrService';
+import { getFreshReviewForm, fetchEmployeeOKRs } from '@/services/okrService';
 import logoImage from '@/assets/talentspotify-logo.png';
 
 // Scroll to section helper
@@ -50,6 +50,7 @@ const Report = () => {
     const stateEmployeeId = location.state?.employeeId;
     const stateManagerId = location.state?.managerId;
     const [selectedSeries, setSelectedSeries] = useState<string | null>(null);
+    const loadingRef = useRef(false);
 
     const handleLegendClick = (e: any) => {
         const seriesName = e.value;
@@ -65,10 +66,12 @@ const Report = () => {
 
     useEffect(() => {
         const loadData = async () => {
+            if (loadingRef.current) return;
+            loadingRef.current = true;
             console.log("%c[REPORT] Loading review data...", "color: cyan; font-weight: bold;");
             try {
                 // Pass dynamic IDs from navigation state if available
-                const response = await fetchReviewForm(stateEmployeeId, stateManagerId);
+                const response = await getFreshReviewForm(false, stateEmployeeId, stateManagerId);
                 console.log("[REPORT] API Response received:", response);
 
                 if (!response) {
@@ -254,6 +257,7 @@ const Report = () => {
                 console.error('[REPORT] Error loading data:', error);
             } finally {
                 setLoading(false);
+                loadingRef.current = false;
             }
         };
 

@@ -38,15 +38,79 @@ export interface Competency {
 // Utility for string normalization
 const normalizeString = (s: string) => (s || "").toLowerCase().trim().replace(/&/g, 'and').replace(/\s+/g, ' ');
 
+// Persistence Keys
+const CACHE_KEY_OKR = 'tara_okr_cache';
+const CACHE_KEY_REVIEW = 'tara_review_cache';
+
 // Cache to store the full KR objects so we can send complete payloads on update
-let okrCache: any[] = [];
+let okrCache: any[] = JSON.parse(sessionStorage.getItem(CACHE_KEY_OKR) || '[]');
+let cachedReviewForm: any = JSON.parse(sessionStorage.getItem(CACHE_KEY_REVIEW) || 'null');
+
+// Simulation State: Start with mock data if API keys are missing
+const MOCK_OKRS = [
+    {
+        _id: "o1",
+        objective: "Increase Revenue",
+        weight: 50,
+        progressStatus: 0,
+        children: [
+            {
+                _id: "k1",
+                keyResultName: "Increase Sales by 30% compared to last year",
+                target: 30,
+                actual: 0,
+                unit: "%"
+            }
+        ]
+    },
+    {
+        _id: "o2",
+        objective: "Expand Customer Success Team",
+        weight: 50,
+        progressStatus: 0,
+        children: [
+            {
+                _id: "k2",
+                keyResultName: "Hire 10 new team members",
+                target: 10,
+                actual: 0,
+                unit: "people"
+            }
+        ]
+    }
+];
+
+const MOCK_REVIEW_FORM = {
+    success: true,
+    data: {
+        review: {
+            _id: "sim-review-123",
+            employeeId: "sim-emp-1",
+            employeeFullName: "Ravi K",
+            managerId: "sim-mgr-1",
+            managerName: "Madhavi",
+            status: "Draft",
+            overallRating: 0,
+            totalAchievement: 0,
+            goals: [],
+            competencies: [],
+            overalComments: { cm1: "", cm2: "", cm3: "" },
+            overallComments: { cm1: "", cm2: "", cm3: "" }
+        }
+    }
+};
 
 // Helper to replace placeholders
 const replaceUrlPlaceholders = (url: string, employeeId?: string, managerId?: string) => {
     let newUrl = url;
+    const companyId = getCompanyId();
+
+    if (newUrl.includes('{company_id}')) {
+        newUrl = newUrl.replace(/\{company_id\}/g, companyId);
+    }
     if (employeeId) {
         newUrl = newUrl.replace(/\{emp_id\}/g, employeeId)
-            .replace(/\{userId\}/g, employeeId); // Common placeholder variant
+            .replace(/\{userId\}/g, employeeId);
     }
     if (managerId) {
         newUrl = newUrl.replace(/\{mgr_id\}/g, managerId);
@@ -58,29 +122,34 @@ export const fetchEmployeeOKRs = async (employeeId?: string, managerId?: string)
     const apiKey = import.meta.env.VITE_EMPLOYEE_API_KEY;
     let apiUrl = import.meta.env.VITE_OKR_API_URL;
 
-    if (employeeId && apiUrl) {
-        // First try placeholder replacement
-        if (apiUrl.includes('{emp_id}') || apiUrl.includes('{userId}')) {
-            apiUrl = replaceUrlPlaceholders(apiUrl, employeeId, managerId);
-        } else {
-            // Fallback to query param injection if no placeholders found (Old logic)
-            const urlObj = new URL(apiUrl);
-            urlObj.searchParams.set('userId', employeeId);
-            urlObj.searchParams.set('empId', employeeId);
-            apiUrl = urlObj.toString();
+    if (apiUrl) {
+        apiUrl = replaceUrlPlaceholders(apiUrl, employeeId, managerId);
+        if (employeeId && !apiUrl.includes('userId=') && !apiUrl.includes('empId=')) {
+            const separator = apiUrl.includes('?') ? '&' : '?';
+            apiUrl = `${apiUrl}${separator}userId=${employeeId}&empId=${employeeId}`;
         }
     }
 
     if (!apiKey || !apiUrl) {
-        console.warn('OKR API key or URL is missing. Returning empty OKRs.');
-        return [];
+        console.warn('OKR API key or URL is missing. Returning MOCK OKRs for simulation.');
+        okrCache = MOCK_OKRS;
+        return MOCK_OKRS.map((item: any) => ({
+            id: item._id || item.id,
+            objective: item.objective,
+            keyResults: (item.children || []).map((kr: any) => ({
+                id: kr._id,
+                description: kr.keyResultName,
+                target: String(kr.target),
+                current: String(kr.actual),
+                metrics: kr.unit || ''
+            }))
+        }));
     }
 
     try {
-        // Safety Check: Do not fetch if placeholders remain
         if (apiUrl.includes('{emp_id}') || apiUrl.includes('{mgr_id}') || apiUrl.includes('{userId}')) {
-            console.warn("Aborting OKR fetch: URL contains unresolved placeholders. Missing Employee ID?", apiUrl);
-            return []; // Return empty to allow synthetic fallback logic or graceful fail
+            console.warn("Aborting OKR fetch: URL contains unresolved placeholders.", apiUrl);
+            return [];
         }
 
         const response = await fetch(apiUrl, {
@@ -96,26 +165,27 @@ export const fetchEmployeeOKRs = async (employeeId?: string, managerId?: string)
         }
 
         const data = await response.json();
-        console.log('Fetched OKR Data:', JSON.stringify(data, null, 2));
-
-        // Handle different potential response structures
         let objectivesList: any[] = [];
-        if (Array.isArray(data)) {
-            objectivesList = data;
-        } else if (data && Array.isArray(data.data)) {
-            objectivesList = data.data;
-        } else if (data && Array.isArray(data.objectives)) {
-            objectivesList = data.objectives;
-        } else {
-            console.warn('Could not find an array of objectives in the response:', data);
-            return [];
-        }
+        if (Array.isArray(data)) objectivesList = data;
+        else if (data && Array.isArray(data.data)) objectivesList = data.data;
+        else if (data && Array.isArray(data.objectives)) objectivesList = data.objectives;
 
-        // Update Cache
+        console.log("%c[DATA] Detailed OKR Status", "color: white; background: #4CAF50; font-weight: bold; padding: 2px 5px;");
+        const flatKRs = objectivesList.flatMap(o =>
+            (o.children || o.keyResults || []).map((kr: any) => ({
+                Objective: o.objective || o.title || o.name,
+                'Key Result': kr.keyResultName || kr.okrName || kr.description,
+                'Actual Value': kr.actual || kr.current || kr.currentValue || 0,
+                'Target Value': kr.target || kr.targetValue || 0,
+                Unit: kr.unit || kr.uom || kr.metrics || ''
+            }))
+        );
+        console.table(flatKRs);
+
         okrCache = objectivesList;
+        sessionStorage.setItem(CACHE_KEY_OKR, JSON.stringify(okrCache));
+        syncReviewWithOKRs();
 
-        // Map to internal OKR interface with fallbacks for field names
-        // The API returns key results in the 'children' array
         return objectivesList.map((item: any) => ({
             id: item._id || item.id || 'unknown-id',
             objective: item.objective || item.title || item.name || item.description || 'No Objective Title',
@@ -137,60 +207,27 @@ export const fetchReviewForm = async (employeeId?: string, managerId?: string): 
     const apiKey = import.meta.env.VITE_EMPLOYEE_API_KEY;
     let apiUrl = import.meta.env.VITE_REVIEW_FORM_API_URL;
 
-    // Dynamic URL Construction
-    if (apiUrl) {
-        if (employeeId || managerId) {
-            // 1. Try Placeholder Replacement
-            if (apiUrl.includes('{emp_id}') || apiUrl.includes('{mgr_id}')) {
-                apiUrl = replaceUrlPlaceholders(apiUrl, employeeId, managerId);
-            }
-            // 2. Fallback to path logic if no placeholders
-            else if (employeeId) {
-                // Expected Env Format: .../getAllReviewsForm/<CompId>/<EmpId>/Employee?companyId=...
-                const parts = apiUrl.split('/');
-                const index = parts.findIndex(p => p.includes('getAllReviewsForm'));
-                if (index !== -1 && parts.length > index + 2) {
-                    parts[index + 2] = employeeId;
-                    apiUrl = parts.join('/');
-                } else {
-                    console.warn("Could not handle dynamic URL replacement for Review Form. Using default.");
-                }
-            }
-        }
-    }
+    if (apiUrl) apiUrl = replaceUrlPlaceholders(apiUrl, employeeId, managerId);
 
     if (!apiKey || !apiUrl) {
-        console.warn('Review API key or URL is missing.');
-        return null;
+        console.warn('Review API key or URL is missing. Returning MOCK Review Form for simulation.');
+        return MOCK_REVIEW_FORM;
     }
 
     try {
         let targetUrl = apiUrl;
-
-        // Logic to prefer Manager View if possible (to see drafts), but fallback to Employee View if Manager ID is missing
         if (managerId) {
             let candidateManagerUrl = '';
+            if (import.meta.env.VITE_MANAGER_REVIEW_FORM_API_URL) candidateManagerUrl = replaceUrlPlaceholders(import.meta.env.VITE_MANAGER_REVIEW_FORM_API_URL, employeeId, managerId);
+            else candidateManagerUrl = apiUrl.replace('/Employee', '/Manager');
 
-            if (import.meta.env.VITE_MANAGER_REVIEW_FORM_API_URL) {
-                candidateManagerUrl = replaceUrlPlaceholders(import.meta.env.VITE_MANAGER_REVIEW_FORM_API_URL, employeeId, managerId);
-            } else {
-                // If no specific Manager API env var, try swapping /Employee for /Manager in the base URL
-                candidateManagerUrl = apiUrl.replace('/Employee', '/Manager');
-            }
-
-            // Check if the candidate URL is valid (no generic placeholders left)
             if (candidateManagerUrl && !candidateManagerUrl.includes('{mgr_id}') && !candidateManagerUrl.includes('undefined')) {
                 console.log('Using Manager View URL for Review Form');
                 targetUrl = candidateManagerUrl;
-            } else {
-                console.warn('Constructed Manager URL was invalid (possibly missing ID). Falling back to Employee URL.');
             }
-        } else {
-            console.log('No Manager ID provided. Using Employee View URL for Review Form.');
         }
 
         console.log('Final Request URL for Review Form:', targetUrl);
-
         const response = await fetch(`${targetUrl}${targetUrl.includes('?') ? '&' : '?'}t=${Date.now()}`, {
             method: 'GET',
             headers: {
@@ -199,40 +236,37 @@ export const fetchReviewForm = async (employeeId?: string, managerId?: string): 
             }
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to fetch Review Form: ${response.statusText}`);
-        }
+        if (!response.ok) throw new Error(`Failed to fetch Review Form: ${response.statusText}`);
 
         let responseData = await response.json();
-        console.log('Fetched Review Form Data:', JSON.stringify(responseData, null, 2));
+        const review = responseData.data?.review || (Array.isArray(responseData.data) ? responseData.data[0] : (responseData.data?.data ? (Array.isArray(responseData.data.data) ? responseData.data.data[0] : responseData.data.data) : responseData.data));
 
-        // Fallback Logic: If Manager View returns empty data, try Employee View
-        // The API returns { success: true, data: [] } when no records are found.
+        if (review) {
+            console.log("%c[DATA] Detailed Review Form Status", "color: white; background: #2196F3; font-weight: bold; padding: 2px 5px;");
+            console.table({
+                "Form ID": review._id || review.id,
+                "Employee": review.employeeFullName,
+                "Manager": review.managerName,
+                "Status": review.status,
+                "Achievement": (review.totalAchievement || 0) + "%"
+            });
+            const feedback = {
+                "Key Accomplishments": review.cm1 || review.accomplishments || review.keyAccomplishments || review.overallComments?.cm1 || review.overalComments?.cm1 || 'None',
+                "Next Quarter Plan": review.cm2 || review.plan || review.nextQuarterPlan || review.overallComments?.cm2 || review.overalComments?.cm2 || 'None',
+                "Manager Overall Comments": review.cm3 || review.managerOverallComments || review.overallComments?.cm3 || review.overalComments?.cm3 || 'None'
+            };
+            console.log("%c[DATA] Qualitative Feedback", "color: #2196F3; font-weight: bold;");
+            console.table(feedback);
+        }
+
         if (targetUrl !== apiUrl && (!responseData.data || (Array.isArray(responseData.data) && responseData.data.length === 0))) {
-            console.warn("Manager View returned empty data. Retrying with Employee View URL:", apiUrl);
-
-            // Check if we need to replace placeholders in the Employee URL (apiUrl) too
             let fallbackUrl = apiUrl;
-            if (fallbackUrl.includes('{emp_id}') && employeeId) {
-                fallbackUrl = replaceUrlPlaceholders(fallbackUrl, employeeId, managerId);
-            }
-
-            console.log("Fallback Request URL:", fallbackUrl);
+            if (fallbackUrl.includes('{emp_id}') && employeeId) fallbackUrl = replaceUrlPlaceholders(fallbackUrl, employeeId, managerId);
             const retryResponse = await fetch(`${fallbackUrl}${fallbackUrl.includes('?') ? '&' : '?'}t=${Date.now()}`, {
                 method: 'GET',
-                headers: {
-                    'Authorization': `Bearer ${apiKey}`,
-                    'Content-Type': 'application/json'
-                }
+                headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }
             });
-
-            if (retryResponse.ok) {
-                const retryData = await retryResponse.json();
-                console.log('Fallback (Employee View) Data:', JSON.stringify(retryData, null, 2));
-                // Only use retry data if it actually has content, otherwise stick to original (empty) or return retry anyway?
-                // Returning retry is safer as it is the "correct" view for the employee at least.
-                responseData = retryData;
-            }
+            if (retryResponse.ok) responseData = await retryResponse.json();
         }
 
         return responseData;
@@ -242,32 +276,48 @@ export const fetchReviewForm = async (employeeId?: string, managerId?: string): 
     }
 };
 
-const getCompanyId = () => {
-    return (new URLSearchParams(window.location.search).get('companyId')) || '6396f7d703546500086f0200';
-};
+const getCompanyId = () => (new URLSearchParams(window.location.search).get('companyId')) || import.meta.env.VITE_COMPANY_ID || '6396f7d703546500086f0200';
 
-// Mutex to prevent race conditions during concurrent updates
 let updateMutex: Promise<any> = Promise.resolve();
-let cachedReviewForm: any = null;
 let lastReviewFetchTime = 0;
 
 export const getFreshReviewForm = async (force: boolean = false, employeeId?: string, managerId?: string) => {
     const now = Date.now();
-    if (!force && cachedReviewForm && (now - lastReviewFetchTime < 30000)) {
-        return cachedReviewForm;
-    }
+    if (!force && cachedReviewForm && (now - lastReviewFetchTime < 30000)) return cachedReviewForm;
     const fresh = await fetchReviewForm(employeeId, managerId);
     if (fresh) {
         cachedReviewForm = fresh;
+        sessionStorage.setItem(CACHE_KEY_REVIEW, JSON.stringify(cachedReviewForm));
+        syncReviewWithOKRs(true);
         lastReviewFetchTime = now;
     }
     return cachedReviewForm;
 };
 
 export const clearReviewCache = () => {
-    console.log("%c[CACHE] Clearing Review Form Cache...", "color: gray;");
     cachedReviewForm = null;
+    sessionStorage.removeItem(CACHE_KEY_REVIEW);
+    sessionStorage.removeItem(CACHE_KEY_OKR);
     lastReviewFetchTime = 0;
+};
+
+export const syncReviewWithOKRs = (silent: boolean = false) => {
+    if (!cachedReviewForm || !cachedReviewForm.data) return;
+    let reviewDataArray = Array.isArray(cachedReviewForm.data) ? cachedReviewForm.data :
+        (cachedReviewForm.data?.review ? [cachedReviewForm.data.review] :
+            (cachedReviewForm.data?.data ? (Array.isArray(cachedReviewForm.data.data) ? cachedReviewForm.data.data : [cachedReviewForm.data.data]) :
+                (cachedReviewForm.data ? [cachedReviewForm.data] : [])));
+    if (reviewDataArray.length > 0) {
+        const updated = applyUpdateToReviewObject(reviewDataArray[0], {});
+        if (Array.isArray(cachedReviewForm.data)) cachedReviewForm.data[0] = updated;
+        else if (cachedReviewForm.data?.review) cachedReviewForm.data.review = updated;
+        else if (cachedReviewForm.data?.data) {
+            if (Array.isArray(cachedReviewForm.data.data)) cachedReviewForm.data.data[0] = updated;
+            else cachedReviewForm.data.data = updated;
+        } else cachedReviewForm.data = updated;
+        sessionStorage.setItem(CACHE_KEY_REVIEW, JSON.stringify(cachedReviewForm));
+        if (!silent) window.dispatchEvent(new CustomEvent('review-data-updated'));
+    }
 };
 
 /**
@@ -285,16 +335,23 @@ const applyUpdateToReviewObject = (reviewObj: any, reviewData: any) => {
         const val = String(reviewData.cm1 || reviewData.accomplishments || reviewData.keyAccomplishments).trim();
         finalReviewObj.overallComments.cm1 = val;
         finalReviewObj.overalComments.cm1 = val;
+        finalReviewObj.cm1 = val;
+        finalReviewObj.accomplishments = val;
+        finalReviewObj.keyAccomplishments = val;
     }
     if (reviewData.cm2 || reviewData.plan || reviewData.nextQuarterPlan) {
         const val = String(reviewData.cm2 || reviewData.plan || reviewData.nextQuarterPlan).trim();
         finalReviewObj.overallComments.cm2 = val;
         finalReviewObj.overalComments.cm2 = val;
+        finalReviewObj.cm2 = val;
+        finalReviewObj.plan = val;
+        finalReviewObj.nextQuarterPlan = val;
     }
     if (reviewData.cm3 || reviewData.managerOverallComments) {
         const val = String(reviewData.cm3 || reviewData.managerOverallComments).trim();
         finalReviewObj.overallComments.cm3 = val;
         finalReviewObj.overalComments.cm3 = val;
+        finalReviewObj.cm3 = val;
         finalReviewObj.managerOverallComments = val;
     }
 
@@ -332,7 +389,7 @@ const applyUpdateToReviewObject = (reviewObj: any, reviewData: any) => {
         finalReviewObj.competencies = newComps;
     }
 
-    // Merge OKR Updates
+    // Merge OKR Updates (Objectives + Key Results)
     if (Array.isArray(finalReviewObj.goals)) {
         finalReviewObj.goals = finalReviewObj.goals.map((goal: any) => {
             const cachedOkr = okrCache.find(o =>
@@ -353,28 +410,23 @@ const applyUpdateToReviewObject = (reviewObj: any, reviewData: any) => {
                         if (cachedKr) {
                             const actual = cachedKr.actual !== undefined ? cachedKr.actual : (cachedKr.current !== undefined ? cachedKr.current : kr.actual);
                             const target = cachedKr.target !== undefined ? cachedKr.target : (cachedKr.targetValue !== undefined ? cachedKr.targetValue : kr.target);
-
-                            // Calculate achievement for this KR (0-100%)
                             const achievement = target > 0 ? (Number(actual) / Number(target)) * 100 : 0;
                             totalKrAchievement += Math.min(100, achievement);
-
                             return { ...kr, actual, target };
                         }
                         return kr;
                     });
-
-                    // Update Goal progressStatus based on average of children achievement
                     if (updatedGoal.children.length > 0) {
                         updatedGoal.progressStatus = Math.round(totalKrAchievement / updatedGoal.children.length);
                     }
                 }
             }
 
+            // Merge Objective rating updates
             const objUpdate = objectiveUpdates.find((u: any) =>
                 (u.id && String(u.id).trim() === String(goal._id || goal.id || "").trim()) ||
                 (u.objectiveName && normalizeString(u.objectiveName) === normalizeString(goal.objective))
             );
-
             if (objUpdate) {
                 if (objUpdate.employeeRating !== undefined) updatedGoal.employeeRating = Number(objUpdate.employeeRating);
                 if (objUpdate.managerRating !== undefined) updatedGoal.managerRating = Number(objUpdate.managerRating);
@@ -382,6 +434,7 @@ const applyUpdateToReviewObject = (reviewObj: any, reviewData: any) => {
                 if (objUpdate.managerFeedback !== undefined) updatedGoal.managerFeedback = objUpdate.managerFeedback;
             }
 
+            // Merge Key Result rating updates
             if (Array.isArray(updatedGoal.children)) {
                 updatedGoal.children = updatedGoal.children.map((kr: any) => {
                     const krUpdate = krUpdates.find((u: any) =>
@@ -498,37 +551,33 @@ const applyUpdateToReviewObject = (reviewObj: any, reviewData: any) => {
  */
 const optimisticUpdateCache = (reviewData: any) => {
     if (!cachedReviewForm || !cachedReviewForm.data) return;
-
     const targetReviewId = (reviewData.id || reviewData._id || "").trim();
     const sessionEmpName = reviewData.employeeFullName || '';
-
     let reviewDataArray = Array.isArray(cachedReviewForm.data) ? cachedReviewForm.data :
         (cachedReviewForm.data?.review ? [cachedReviewForm.data.review] :
             (cachedReviewForm.data?.data ? (Array.isArray(cachedReviewForm.data.data) ? cachedReviewForm.data.data : [cachedReviewForm.data.data]) :
                 (cachedReviewForm.data ? [cachedReviewForm.data] : [])));
 
     let reviewObj = reviewDataArray.find((r: any) => targetReviewId && (String(r._id).toLowerCase() === targetReviewId.toLowerCase() || String(r.id).toLowerCase() === targetReviewId.toLowerCase()));
-    if (!reviewObj) {
-        reviewObj = reviewDataArray.find((r: any) => (sessionEmpName && normalizeString(r.employeeFullName).includes(normalizeString(sessionEmpName))));
+    if (!reviewObj && sessionEmpName) reviewObj = reviewDataArray.find((r: any) => normalizeString(r.employeeFullName).includes(normalizeString(sessionEmpName)));
+    if (!reviewObj && reviewData.employeeId) {
+        const targetEmpId = String(reviewData.employeeId).trim().toLowerCase();
+        reviewObj = reviewDataArray.find((r: any) => String(r.employeeId?._id || r.employeeId || "").trim().toLowerCase() === targetEmpId);
     }
-    if (!reviewObj) {
-        reviewObj = reviewDataArray.find((r: any) => r.employeeId === '68e240b0d9876d59139672d6') || reviewDataArray[0];
-    }
+    if (!reviewObj) reviewObj = reviewDataArray[0];
 
     if (reviewObj) {
         const updatedObj = applyUpdateToReviewObject(reviewObj, reviewData);
-        // Find index in original array to replace
-        const idx = reviewDataArray.findIndex((r: any) => r._id === reviewObj._id);
+        const idx = reviewDataArray.findIndex((r: any) => (r._id || r.id) === (reviewObj._id || reviewObj.id));
         if (idx !== -1) {
             reviewDataArray[idx] = updatedObj;
-            // Update the wrapper accordingly
             if (Array.isArray(cachedReviewForm.data)) cachedReviewForm.data = [...reviewDataArray];
             else if (cachedReviewForm.data?.review) cachedReviewForm.data.review = updatedObj;
             else if (cachedReviewForm.data?.data) {
                 if (Array.isArray(cachedReviewForm.data.data)) cachedReviewForm.data.data = [...reviewDataArray];
                 else cachedReviewForm.data.data = updatedObj;
             } else cachedReviewForm.data = updatedObj;
-
+            sessionStorage.setItem(CACHE_KEY_REVIEW, JSON.stringify(cachedReviewForm));
             console.log("%c[OPTIMISTIC] Local cache updated. Dispatching event...", "color: orange;");
             window.dispatchEvent(new CustomEvent('review-data-updated'));
         }
@@ -536,16 +585,18 @@ const optimisticUpdateCache = (reviewData: any) => {
 };
 
 export const submitEmployeeSelfAssessment = async (reviewData: any): Promise<boolean> => {
-    // Optimistic Update: Update cache and trigger UI immediately
+    // Optimistic Update FIRST (for instant UI)
     optimisticUpdateCache(reviewData);
 
     const result = await (updateMutex = updateMutex.then(async () => {
         try {
-            console.log("%c[SUBMISSION] Starting Employee Self-Assessment Sync...", "color: cyan; font-weight: bold;");
-
             if (okrCache.length === 0) await fetchEmployeeOKRs();
-            const fullReviewData = await getFreshReviewForm();
-            if (!fullReviewData || !fullReviewData.data) return false;
+            // BUG FIX: Use cached form (already populated at session start) instead of re-fetching without IDs
+            const fullReviewData = cachedReviewForm || await getFreshReviewForm();
+            if (!fullReviewData || !fullReviewData.data) {
+                console.error("[SUBMISSION] No review data available.");
+                return false;
+            }
 
             const providedId = (reviewData.id || reviewData._id || "").trim();
             let reviewDataArray = Array.isArray(fullReviewData.data) ? fullReviewData.data :
@@ -555,54 +606,142 @@ export const submitEmployeeSelfAssessment = async (reviewData: any): Promise<boo
 
             reviewDataArray = reviewDataArray.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
+            // 1. Match by ID
             let reviewObj = reviewDataArray.find((r: any) =>
                 providedId && (String(r._id).toLowerCase() === providedId.toLowerCase() || String(r.id).toLowerCase() === providedId.toLowerCase())
             );
 
+            // 2. Match by Employee Name
             if (!reviewObj) {
                 const sessionEmpName = reviewData.employeeFullName || '';
                 reviewObj = reviewDataArray.find((r: any) => sessionEmpName && normalizeString(r.employeeFullName).includes(normalizeString(sessionEmpName)));
             }
-            if (!reviewObj) reviewObj = reviewDataArray.find((r: any) => r.employeeId === '68e240b0d9876d59139672d6') || reviewDataArray[0];
-            if (!reviewObj) return false;
+
+            // 3. Match by Employee ID
+            if (!reviewObj && reviewData.employeeId) {
+                const targetEmpId = String(reviewData.employeeId).trim().toLowerCase();
+                reviewObj = reviewDataArray.find((r: any) => {
+                    const rEmpId = String(r.employeeId?._id || r.employeeId || "").trim().toLowerCase();
+                    return rEmpId === targetEmpId;
+                });
+            }
+
+            // 4. Ultimate Fallback: Most recent record
+            if (!reviewObj) {
+                console.warn("[SUBMISSION] No precise match found. Falling back to most recent record.");
+                reviewObj = reviewDataArray[0];
+            }
+            if (!reviewObj) {
+                console.error("[SUBMISSION] No review record found at all.");
+                return false;
+            }
+
+            console.log("%c[SUBMISSION] Target Review Record:", "color: cyan;", {
+                _id: reviewObj._id,
+                employee: reviewObj.employeeFullName,
+                status: reviewObj.status
+            });
 
             const finalReviewObj = applyUpdateToReviewObject(reviewObj, reviewData);
             const cleanPayload = JSON.parse(JSON.stringify(finalReviewObj));
 
-            // Cleanup metadata for API
+            // Clean fields that the API might reject
             ['__v', 'createdAt', 'updatedAt'].forEach(f => delete cleanPayload[f]);
             if (cleanPayload.companyId?._id) cleanPayload.companyId = String(cleanPayload.companyId._id);
             if (cleanPayload.employeeId?._id) cleanPayload.employeeId = String(cleanPayload.employeeId._id);
 
             const apiKey = import.meta.env.VITE_EMPLOYEE_API_KEY;
-
-            // Construct Submission URL
-            let url = '';
+            const submitApiUrl = import.meta.env.VITE_SUBMIT_REVIEW_API_URL;
             const managerUpdateUrl = import.meta.env.VITE_MANAGER_REVIEW_UPDATE_URL;
 
-            if (managerUpdateUrl && managerUpdateUrl.includes('{form_id}')) {
-                // REQ: Replace {form_id} with the found form ID
-                url = managerUpdateUrl.replace('{form_id}', reviewObj._id);
-            } else {
-                // Fallback to Employee URL or default construction
-                url = `${import.meta.env.VITE_SUBMIT_REVIEW_API_URL || 'https://ai.talentspotifyapp.com/api/reviewForm/updateReviewForm'}/${reviewObj._id}?companyId=${getCompanyId()}`;
+            if (!apiKey || (!submitApiUrl && !managerUpdateUrl)) {
+                console.log("%c[SIMULATION] Saved detail internally.", "color: green; font-weight: bold;");
+                return true;
             }
 
-            console.log("[SUBMISSION] URL:", url);
+            // Construct Submission URL
+            let submissionUrl = managerUpdateUrl || submitApiUrl;
+            const reviewId = String(finalReviewObj._id || finalReviewObj.id || "");
 
-            const response = await fetch(url, {
-                method: 'PUT',
-                headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+            // SANITIZE IDs for URL substitution (prevent [object Object])
+            const urlEmpId = typeof finalReviewObj.employeeId === 'object' ? (finalReviewObj.employeeId._id || finalReviewObj.employeeId.id) : finalReviewObj.employeeId;
+            const urlMgrId = typeof finalReviewObj.managerId === 'object' ? (finalReviewObj.managerId._id || finalReviewObj.managerId.id) : finalReviewObj.managerId;
+
+            submissionUrl = replaceUrlPlaceholders(submissionUrl, String(urlEmpId || ""), String(urlMgrId || ""));
+            if (submissionUrl.includes('{form_id}') && reviewId) {
+                submissionUrl = submissionUrl.replace('{form_id}', reviewId);
+            }
+
+            const companyId = getCompanyId();
+            if (!submissionUrl.includes('companyId=') && companyId) {
+                submissionUrl += `${submissionUrl.includes('?') ? '&' : '?'}companyId=${companyId}`;
+            }
+
+            const isUpdate = reviewId && submissionUrl.includes(reviewId);
+            const method = isUpdate ? 'PUT' : 'POST';
+
+            console.log(`%c[SUBMISSION] Syncing feedback to backend (${method})...`, "color: cyan;", submissionUrl);
+            console.log(`%c[SUBMISSION] Payload preview:`, "color: gray;", {
+                cm1: cleanPayload.cm1 || cleanPayload.overallComments?.cm1,
+                cm2: cleanPayload.cm2 || cleanPayload.overallComments?.cm2,
+                cm3: cleanPayload.cm3 || cleanPayload.overallComments?.cm3,
+                goalsCount: cleanPayload.goals?.length,
+                competenciesCount: cleanPayload.competencies?.length
+            });
+
+            const response = await fetch(submissionUrl, {
+                method,
+                headers: {
+                    'Authorization': `Bearer ${apiKey}`,
+                    'Content-Type': 'application/json'
+                },
                 body: JSON.stringify(cleanPayload)
             });
 
             if (response.ok) {
-                console.log("%c[SUBMISSION] Sync Success", "color: green;");
-                cachedReviewForm = { ...fullReviewData, data: cleanPayload };
+                console.log(`%c[SUBMISSION] Successfully synced feedback to backend (${method}).`, "color: green; font-weight: bold;");
+
+                // Update cache with the confirmed data
+                optimisticUpdateCache(reviewData);
+                sessionStorage.setItem(CACHE_KEY_REVIEW, JSON.stringify(cachedReviewForm));
+
+                // Trigger UI refresh
                 window.dispatchEvent(new CustomEvent('review-data-updated'));
                 return true;
+            } else {
+                const errorStatus = response.status;
+                const errorData = await response.text();
+                console.error("[SUBMISSION] Feedback Sync Failed:", errorStatus, errorData);
+
+                // FALLBACK: If PUT failed, try POST to the base URL
+                if (method === 'PUT' && submitApiUrl) {
+                    console.log("%c[SUBMISSION] Attempting POST fallback to base URL...", "color: orange;");
+                    try {
+                        const fallbackResponse = await fetch(submitApiUrl, {
+                            method: 'POST',
+                            headers: {
+                                'Authorization': `Bearer ${apiKey}`,
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify(cleanPayload)
+                        });
+
+                        if (fallbackResponse.ok) {
+                            console.log("%c[SUBMISSION] POST Fallback Successful!", "color: green; font-weight: bold;");
+                            optimisticUpdateCache(reviewData);
+                            sessionStorage.setItem(CACHE_KEY_REVIEW, JSON.stringify(cachedReviewForm));
+                            window.dispatchEvent(new CustomEvent('review-data-updated'));
+                            return true;
+                        } else {
+                            const fallbackError = await fallbackResponse.text();
+                            console.error("[SUBMISSION] POST Fallback also failed:", fallbackResponse.status, fallbackError);
+                        }
+                    } catch (fallbackErr) {
+                        console.error("[SUBMISSION] POST Fallback Error:", fallbackErr);
+                    }
+                }
+                return false;
             }
-            return false;
         } catch (e) {
             console.error("[SUBMISSION] Sync Error:", e);
             return false;
@@ -616,84 +755,13 @@ export const updateKeyResultWithRating = async (id: string, currentValue: string
 };
 
 export const submitCompetencyReview = async (reviewData: any): Promise<boolean> => {
-    // Optimistic Update
-    optimisticUpdateCache(reviewData);
-
-    const result = await (updateMutex = updateMutex.then(async () => {
-        try {
-            console.log("%c[SUBMISSION] Starting Competency Sync...", "color: cyan; font-weight: bold;");
-
-            if (okrCache.length === 0) await fetchEmployeeOKRs();
-            const fullReviewData = await getFreshReviewForm();
-            if (!fullReviewData || !fullReviewData.data) return false;
-
-            const providedId = (reviewData.id || reviewData._id || "").trim();
-            let reviewDataArray = Array.isArray(fullReviewData.data) ? fullReviewData.data :
-                (fullReviewData.data?.review ? [fullReviewData.data.review] :
-                    (fullReviewData.data?.data ? (Array.isArray(fullReviewData.data.data) ? fullReviewData.data.data : [fullReviewData.data.data]) :
-                        (fullReviewData.data ? [fullReviewData.data] : [])));
-
-            reviewDataArray = reviewDataArray.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-
-            let reviewObj = reviewDataArray.find((r: any) =>
-                providedId && (String(r._id).toLowerCase() === providedId.toLowerCase() || String(r.id).toLowerCase() === providedId.toLowerCase())
-            );
-
-            if (!reviewObj) {
-                const sessionEmpName = reviewData.employeeFullName || '';
-                reviewObj = reviewDataArray.find((r: any) => sessionEmpName && normalizeString(r.employeeFullName).includes(normalizeString(sessionEmpName)));
-            }
-            if (!reviewObj) reviewObj = reviewDataArray.find((r: any) => r.employeeId === '68e240b0d9876d59139672d6') || reviewDataArray[0];
-            if (!reviewObj) return false;
-
-            const finalReviewObj = applyUpdateToReviewObject(reviewObj, reviewData);
-            const cleanPayload = JSON.parse(JSON.stringify(finalReviewObj));
-
-            ['__v', 'createdAt', 'updatedAt'].forEach(f => delete cleanPayload[f]);
-            if (cleanPayload.companyId?._id) cleanPayload.companyId = String(cleanPayload.companyId._id);
-            if (cleanPayload.employeeId?._id) cleanPayload.employeeId = String(cleanPayload.employeeId._id);
-
-            const apiKey = import.meta.env.VITE_EMPLOYEE_API_KEY;
-
-            // Construct Submission URL
-            let url = '';
-            const managerUpdateUrl = import.meta.env.VITE_MANAGER_REVIEW_UPDATE_URL;
-
-            if (managerUpdateUrl && managerUpdateUrl.includes('{form_id}')) {
-                // REQ: Replace {form_id} with the found form ID
-                url = managerUpdateUrl.replace('{form_id}', reviewObj._id);
-            } else {
-                // Fallback to Employee URL or default construction
-                url = `${import.meta.env.VITE_SUBMIT_REVIEW_API_URL || 'https://ai.talentspotifyapp.com/api/reviewForm/updateReviewForm'}/${reviewObj._id}?companyId=${getCompanyId()}`;
-            }
-
-            console.log("[SUBMISSION] URL:", url);
-
-            const response = await fetch(url, {
-                method: 'PUT',
-                headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify(cleanPayload)
-            });
-
-            if (response.ok) {
-                console.log("%c[SUBMISSION] Sync Success", "color: green;");
-                cachedReviewForm = { ...fullReviewData, data: cleanPayload };
-                window.dispatchEvent(new CustomEvent('review-data-updated'));
-                return true;
-            }
-            return false;
-        } catch (e) {
-            console.error("[SUBMISSION] Sync Error:", e);
-            return false;
-        }
-    }));
-    return !!result;
+    // Both self-assessment and competency review update the same Review Form object
+    return submitEmployeeSelfAssessment(reviewData);
 };
 
 export const updateKeyResult = async (id: string, currentValue: string): Promise<boolean> => {
     // Optimistic Update for report view
     if (cachedReviewForm && cachedReviewForm.data) {
-        // Sync to review form goals children immediately
         const dummyReviewData = { keyResultReviews: [{ id, actual: Number(currentValue) }] };
         optimisticUpdateCache(dummyReviewData);
     }
@@ -726,6 +794,15 @@ export const updateKeyResult = async (id: string, currentValue: string): Promise
             fullKeyResultObj = { actual: currentValue };
         }
 
+        if (!apiKey || !import.meta.env.VITE_UPDATE_KEY_RESULT_API_URL) {
+            console.log("%c[SIMULATION] Key Result updated internally.", "color: green;");
+            if (objectiveIndex !== -1 && krIndex !== -1) {
+                okrCache[objectiveIndex].children[krIndex] = { ...okrCache[objectiveIndex].children[krIndex], ...fullKeyResultObj };
+            }
+            window.dispatchEvent(new CustomEvent('review-data-updated'));
+            return true;
+        }
+
         const url = `${updateUrlBase}/${id}?companyId=${companyId}`;
         const response = await fetch(url, {
             method: 'PUT',
@@ -736,6 +813,7 @@ export const updateKeyResult = async (id: string, currentValue: string): Promise
         if (response.ok) {
             if (objectiveIndex !== -1 && krIndex !== -1) {
                 okrCache[objectiveIndex].children[krIndex] = { ...okrCache[objectiveIndex].children[krIndex], ...fullKeyResultObj };
+                sessionStorage.setItem(CACHE_KEY_OKR, JSON.stringify(okrCache));
             }
             window.dispatchEvent(new CustomEvent('review-data-updated'));
             return true;

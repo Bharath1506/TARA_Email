@@ -1,0 +1,3 @@
+﻿Fetching reviews from: https://ai.talentspotifyapp.com/api/reviewForm/getAllReviewsForm/6396f7d703546500086f0200
+Data received status: undefined
+No reviews found.

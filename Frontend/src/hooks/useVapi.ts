@@ -244,6 +244,7 @@ export const useVapi = () => {
                                         }
                                     } else {
                                         const { id, reviewId, rating, role, type, name, comment } = args;
+                                        console.log(`%c[VAPI] Tool Update: type=${type} role=${role} id=${id || reviewId}`, "color: purple; font-weight: bold;");
                                         const updateData: any = {};
                                         const ratingKey = `${role}Rating`;
 
@@ -270,6 +271,7 @@ export const useVapi = () => {
                                             }
                                         }
                                         updateData.id = targetId;
+                                        console.log(`%c[VAPI] Resolved Target ID: ${targetId}`, "color: purple;");
 
                                         if (type === 'objective') {
                                             const objReview: any = { id, objectiveName: name };
@@ -286,20 +288,21 @@ export const useVapi = () => {
                                             if (rating !== undefined) competencyData[`${role}Rating`] = rating;
                                             if (comment !== undefined) competencyData[`${role}Comments`] = comment;
                                             updateData.competencyReviews = [competencyData];
-                                        } else if (type === 'accomplishments') {
+                                        } else if (type === 'accomplishments' || type === 'key_accomplishments' || type === 'cm1') {
                                             updateData.keyAccomplishments = comment;
                                             updateData.accomplishments = comment;
                                             updateData.cm1 = comment;
-                                        } else if (type === 'next_quarter_plan') {
+                                        } else if (type === 'next_quarter_plan' || type === 'plan' || type === 'cm2') {
                                             updateData.nextQuarterPlan = comment;
                                             updateData.plan = comment;
                                             updateData.cm2 = comment;
-                                        } else if (type === 'manager_comments' || type === 'manager_comment') {
+                                        } else if (type === 'manager_comments' || type === 'manager_comment' || type === 'overall_comments' || type === 'cm3') {
                                             updateData.managerOverallComments = comment;
                                             updateData.cm3 = comment;
                                         }
 
                                         updateData.employeeFullName = participantNamesRef.current.employee;
+                                        updateData.employeeId = userIdsRef.current.employeeId;
                                         updateData.managerName = participantNamesRef.current.manager;
 
                                         const isManagerComment = type === 'manager_comments' || type === 'manager_comment';
@@ -459,8 +462,9 @@ export const useVapi = () => {
         };
     }, [isCallActive, isSpeaking, isToolExecuting, vapi]);
 
-    const startCall = useCallback(async (managerInputName?: string, employeeInputName?: string, employeeId?: string, managerId?: string) => {
+    const startCall = useCallback(async (managerInputName?: string, employeeInputName?: string, employeeId?: string, managerId?: string, reviewType?: string) => {
         try {
+            console.log('[VAPI] startCall initiated:', { managerInputName, employeeInputName, employeeId, managerId, reviewType });
             console.log('Fetching OKRs for:', employeeId || 'Default');
             const okrs = await fetchEmployeeOKRs(employeeId, managerId);
             console.log('Fetching Review Form for:', employeeId || 'Default');
@@ -485,19 +489,26 @@ export const useVapi = () => {
             }
             if (!foundReviewId) console.warn("[VAPI] No Review ID found at start.");
 
+            console.log("%c[CALL STARTING] Session Identity:", "color: white; background: #673AB7; font-weight: bold; padding: 4px; border-radius: 4px;");
+            console.table({
+                "Employee Name": employeeInputName,
+                "Employee ID": employeeId,
+                "Manager Name": managerInputName,
+                "Manager ID": managerId,
+                "Form ID": foundReviewId
+            });
+
             setParticipantNames({ employee: employeeInputName || 'Employee', manager: managerInputName || 'Manager' });
             participantNamesRef.current = { employee: employeeInputName || 'Employee', manager: managerInputName || 'Manager' };
 
-            const systemPrompt = getSystemPromptWithConfigs(okrs, reviewData, employeeInputName, managerInputName);
+            const systemPrompt = getSystemPromptWithConfigs(okrs, reviewData, employeeInputName, managerInputName, reviewType);
             const assistantId = import.meta.env.VITE_VAPI_ASSISTANT_ID || '416bb3db-da61-4512-aca3-1002b4b5d13f';
 
-            // Start the call using the Assistant ID from the dashboard.
-            // We MUST provide the provider and model name when overriding the dynamic messages (system prompt)
-            // and firstMessage to ensure participant names are correctly used.
-            await vapi.start(assistantId, {
+            console.log('[VAPI] vapi.start() initiating...');
+            const startPromise = vapi.start(assistantId, {
                 model: {
                     provider: 'groq',
-                    model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+                    model: 'llama-3.3-70b-versatile',
                     messages: [
                         {
                             role: 'system',
@@ -509,7 +520,7 @@ export const useVapi = () => {
                             type: "function",
                             function: {
                                 name: "update_key_result",
-                                description: "Updates ONLY the progress (actual value) of a specific Key Result. Call this when the employee confirms a new actual value.",
+                                description: "Updates ONLY the numeric progress (actual value) of a specific Key Result. CRITICAL: Only call this tool AFTER the user explicitly speaks a new or confirmed numeric value during the conversation. NEVER call this proactive at the start of a session.",
                                 parameters: {
                                     type: "object",
                                     properties: {
@@ -524,7 +535,7 @@ export const useVapi = () => {
                             type: "function",
                             function: {
                                 name: "update_okr_rating",
-                                description: "Updates the rating for an Objective, Key Result, or Competency immediately after it is provided.",
+                                description: "Updates the rating for an Objective, Key Result, or Competency. CRITICAL: ONLY call this AFTER the user has explicitly provided a rating/comment. NEVER call this proactively.",
                                 parameters: {
                                     type: "object",
                                     properties: {
@@ -582,6 +593,9 @@ export const useVapi = () => {
                 maxDurationSeconds: 1800,
                 fillersEnabled: true
             } as any);
+
+            await startPromise;
+            console.log('[VAPI] vapi.start() resolved successfully');
 
         } catch (err: any) {
             console.error('Failed to start call:', err);

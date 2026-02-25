@@ -31,22 +31,54 @@ export const getFullName = (emp: Employee | Manager) => {
 };
 
 const getCompanyId = () => {
-    return (new URLSearchParams(window.location.search).get('companyId')) || '6396f7d703546500086f0200';
+    return (new URLSearchParams(window.location.search).get('companyId')) || import.meta.env.VITE_COMPANY_ID || '6396f7d703546500086f0200';
 };
+
+const MOCK_EMPLOYEES: Employee[] = [
+    {
+        _id: "68e240b0d9876d59139672d6",
+        employeeNumber: "EMP001",
+        firstName: "Ravi",
+        lastName: "K",
+        email: "ravi@talentspotify.com",
+        lineManager: "68e49939df33a7c9177aaf03",
+        personalInformation: {
+            firstName: "Ravi",
+            lastName: "K",
+            middleName: ""
+        },
+        contactInformation: {
+            workEmail: "ravi@talentspotify.com"
+        },
+        employmentInformation: {
+            employeeNumber: "EMP001"
+        }
+    } as any,
+    {
+        _id: "68e49939df33a7c9177aaf03",
+        employeeNumber: "MGR001",
+        firstName: "Madhavi",
+        lastName: "P",
+        email: "madhavi@talentspotify.com",
+        personalInformation: {
+            firstName: "Madhavi",
+            lastName: "P",
+            middleName: ""
+        }
+    } as any
+];
 
 export const fetchAllEmployees = async (): Promise<Employee[]> => {
     const apiKey = import.meta.env.VITE_EMPLOYEE_API_KEY; // Token
-    // URL provided by user in env var: https://ai.talentspotifyapp.com/api/employees/getEmployeesAll/6396f7d703546500086f0200
-    const apiUrl = import.meta.env.VITE_GET_ALL_EMPLOYEE_API_KEY;
+    let apiUrl = import.meta.env.VITE_EMPLOYEE_LIST_API_URL;
 
-    if (!apiKey) {
-        console.warn('Employee API key is missing.');
-        return [];
+    if (apiUrl && apiUrl.includes('{company_id}')) {
+        apiUrl = apiUrl.replace('{company_id}', getCompanyId());
     }
 
-    if (!apiUrl) {
-        console.warn('Get All Employees URL (VITE_GET_ALL_EMPLOYEE_API_KEY) is missing.');
-        return [];
+    if (!apiKey || !apiUrl) {
+        console.warn('Employee API key or URL is missing. Returning MOCK employees for simulation.');
+        return MOCK_EMPLOYEES;
     }
 
     try {
